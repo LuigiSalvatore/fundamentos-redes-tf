@@ -1,6 +1,6 @@
 import socket
 import threading
-import time
+from time import time
 import base64
 import os
 import hashlib
@@ -22,6 +22,7 @@ class Node:
             self.dest_port = int(line[split+1:-1])
             self.name = file.readline().strip()
             self.token_lifetime = int(file.readline().strip())
+            self.token_held = 0
             self.token = True if file.readline().strip() == "true" else False
             self.msgs = {}
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,6 +52,9 @@ class Node:
         # Senao, se houver msgs pra enviar, e tiver o token, envia
         elif len(self.msgs) > 0 and self.has_token == True:
             self.socket.sendto(self.msgs[-1].encode('utf-8'), (self.dest_ip, self.dest_port))
+
+    def send_token(self):
+        self.socket.sendto("9000".encode('utf-8'), (self.dest_ip, self.dest_port))
     
     def listen_loop(self):
         while True:
@@ -69,6 +73,7 @@ class Node:
                 # INSERIR FUNÇÃO QUE HANDLE CONTROLE DE TOKEN
             else:
                 self.has_token = True
+                self.token_held = time()
 
         elif data_type == "7777":
             data = aux[1]
@@ -83,4 +88,12 @@ class Node:
                     send()
                 else:
                     self.received_msg = data
-                    
+
+    def token_timer(self):
+        while (True):
+            if self.has_token and time() - self.token_held >= self.token_lifetime:
+                self.has_token = False
+                send_token()
+            else:
+                time.sleep(1)
+                
