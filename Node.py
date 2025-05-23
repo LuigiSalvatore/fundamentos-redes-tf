@@ -5,17 +5,7 @@ import base64
 import os
 import hashlib
 import argparse
-from pending_message import PendingMessage
-from device_info import DeviceInfo
-from message_handler import MessageHandler
-
-HEARTBEAT_INTERVAL = 5
-DEVICE_TIMEOUT = 10
-CLEANUP_INTERVAL = 2
-RESEND_INTERVAL = 2
-PORT = 11000
-MAX_RETRY = 5 #maximo numero de tentativas de reenvio
-message_counter = 0
+from zlib import crc32
 
 class Node:
     def __init__(self, filename, listen_port=11000):
@@ -39,6 +29,8 @@ class Node:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self.lock = threading.Lock()
             self.has_token = False
+            self.pass_msg = None # Mensagems a serem repassadas
+            self.received_msg = None # Mensagems para a própria máquina
 
             if self.token_lifetime <= 0: 
                 raise Exception("Token lifetime set to 0 or less, aborting...")
@@ -52,7 +44,12 @@ class Node:
             print("Message limit (10) reached, please wait until a message is sent.")
     
     def send(self):
-        if len(self.msgs) > 0:
+        # Se houver msg pra ser repassada, repassa
+        if self.pass_msg is not None:
+            self.socket.sendto(self.pass_msg.encode('utf-8'), (self.dest_ip, self.dest_port))
+            self.pass_msg = None
+        # Senao, se houver msgs pra enviar, e tiver o token, envia
+        elif len(self.msgs) > 0 and self.has_token == True:
             self.socket.sendto(self.msgs[-1].encode('utf-8'), (self.dest_ip, self.dest_port))
     
     def listen_loop(self):
@@ -69,11 +66,21 @@ class Node:
         if data_type == "9000":
             if self.has_token and self.token:
                 pass
-                # INSERIOR FUNÇÃO QUE HANDLE CONTROLE DE TOKEN
+                # INSERIR FUNÇÃO QUE HANDLE CONTROLE DE TOKEN
             else:
                 self.has_token = True
 
         elif data_type == "7777":
             data = aux[1]
-            data = data.split(';')
-            
+            data = data.split(';') # Isso deve split a mensagem em controle de erro, nome de origem, nome de destino, crc, e mensagem, nesta ordem
+
+            #checar erro
+            err = crc32(data[4]) # usa o crc32 na mensagem
+
+            if err == int(data[0]):
+                if data[2] != self.name:
+                    self.pass_msg = message
+                    send()
+                else:
+                    self.received_msg = data
+                    
