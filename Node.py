@@ -32,6 +32,7 @@ class Node:
             self.has_token = False
             self.pass_msg = None # Mensagems a serem repassadas
             self.received_msg = None # Mensagems para a própria máquina
+            self.returned_msg = None # Mensagems que voltaram para própria máquina
 
             if self.token_lifetime <= 0: 
                 raise Exception("Token lifetime set to 0 or less, aborting...")
@@ -52,9 +53,41 @@ class Node:
         # Senao, se houver msgs pra enviar, e tiver o token, envia
         elif len(self.msgs) > 0 and self.has_token == True:
             self.socket.sendto(self.msgs[-1].encode('utf-8'), (self.dest_ip, self.dest_port))
+            # Enquanto n receber a mensagem de volta, não pode enviar outras msgs
             while True:
-                if self.received_msg is not None and self.received_msg[0] == "ACK":
-                    print(f'Message received by {self.received_msg[1]}')
+                if self.received_msg is not None:
+                    if self.received_msg[0] == "ACK":
+                        print(f'Message received by {self.received_msg[2]} with an ACK!')
+                        self.msgs.pop()
+                        self.received_msg = None
+                        break
+                    elif self.received_msg[0] == "NACK":
+                        print(f'Message received by {self.received_msg[2]} with a NACK!')
+                        self.received_msg = None
+                        self.send()
+                        break
+                    elif self.received_msg[0] == "naoexiste":
+                        print(f'Não existe um caminho para {self.received_msg[2]}.')
+                        self.msgs.pop()
+                        self.received_msg = None
+                        break
+                    else:
+                        raise Exception("Como? [mensagem com erro fatal]")
+                    
+    async def receive(self):
+        while True:
+            ret_msg = "7777:"
+            if self.received_msg is not None:
+                #calcula o erro
+                err = crc32(self.received_msg[-1])
+                if err != self.received_msg[3]:
+                    ret_msg += "NACK" + self.received_msg[1:-1]
+                else:
+                    ret_msg += "ACK" + self.received_msg[1:-1]
+                print(f'Received Message: {self.received_msg[-1]}')
+                print(f'Origin: {self.received_msg[1]}')
+                self.pass_msg = ret_msg
+                self.received_msg = None
 
     def send_token(self):
         self.socket.sendto("9000".encode('utf-8'), (self.dest_ip, self.dest_port))
@@ -82,15 +115,16 @@ class Node:
             data = aux[1]
             data = data.split(';') # Isso deve split a mensagem em controle de erro, nome de origem, nome de destino, crc, e mensagem, nesta ordem
 
-            #checar erro
-            err = crc32(data[4]) # usa o crc32 na mensagem
-
-            if err == int(data[0]):
-                if data[2] != self.name:
-                    self.pass_msg = message
-                    self.send()
-                else:
-                    self.received_msg = data
+            # se uma msg que a maquina mandou voltou pra ela mesma, guarda
+            if data[1] == self.name:
+                self.returned_msg = data
+            # caso contrario se nao for pra ela, manda adiante
+            elif data[2] != self.name:
+                self.pass_msg = message
+                self.send()
+            # senao é pra ela, entao guarda
+            else:
+                self.received_msg = data
 
     def token_timer(self):
         while (True):
