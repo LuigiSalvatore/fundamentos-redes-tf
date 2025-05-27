@@ -44,7 +44,7 @@ class Node:
         else:
             print("Message limit (10) reached, please wait until a message is sent.")
     
-    def send(self):
+    async def send(self):
         # Se houver msg pra ser repassada, repassa
         if self.pass_msg is not None:
             self.socket.sendto(self.pass_msg.encode('utf-8'), (self.dest_ip, self.dest_port))
@@ -52,11 +52,14 @@ class Node:
         # Senao, se houver msgs pra enviar, e tiver o token, envia
         elif len(self.msgs) > 0 and self.has_token == True:
             self.socket.sendto(self.msgs[-1].encode('utf-8'), (self.dest_ip, self.dest_port))
+            while True:
+                if self.received_msg is not None and self.received_msg[0] == "ACK":
+                    print(f'Message received by {self.received_msg[1]}')
 
     def send_token(self):
         self.socket.sendto("9000".encode('utf-8'), (self.dest_ip, self.dest_port))
     
-    def listen_loop(self):
+    async def listen_loop(self):
         while True:
             data, addr = self.socket.recvfrom(self.listen_port)
             message = data.decode('utf-8')
@@ -85,7 +88,7 @@ class Node:
             if err == int(data[0]):
                 if data[2] != self.name:
                     self.pass_msg = message
-                    send()
+                    self.send()
                 else:
                     self.received_msg = data
 
@@ -93,7 +96,7 @@ class Node:
         while (True):
             if self.has_token and time() - self.token_held >= self.token_lifetime:
                 self.has_token = False
-                send_token()
+                self.send_token()
             else:
                 time.sleep(1)
                 
