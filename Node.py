@@ -60,23 +60,25 @@ class Node:
                         print(f'Message received by {self.received_msg[2]} with an ACK!')
                         self.msgs.pop()
                         self.received_msg = None
+                        self.send_token()
                         break
                     elif self.received_msg[0] == "NACK":
                         print(f'Message received by {self.received_msg[2]} with a NACK!')
                         self.received_msg = None
-                        self.send()
+                        self.send_token()
                         break
                     elif self.received_msg[0] == "naoexiste":
-                        print(f'Não existe um caminho para {self.received_msg[2]}.')
+                        print(f'Não existe um caminho para {self.received_msg[0]}.')
                         self.msgs.pop()
                         self.received_msg = None
+                        self.send_token()
                         break
                     else:
                         raise Exception("Como? [mensagem com erro fatal]")
                     
     async def receive(self):
         while True:
-            ret_msg = "7777:"
+            ret_msg = "7776:"
             if self.received_msg is not None:
                 #calcula o erro
                 err = crc32(self.received_msg[-1])
@@ -88,6 +90,11 @@ class Node:
                 print(f'Origin: {self.received_msg[1]}')
                 self.pass_msg = ret_msg
                 self.received_msg = None
+
+    async def message_looped(self):
+        while True:
+            if self.returned_msg is not None:
+                err = crc32(self.returned_msg[-1])
 
     def send_token(self):
         self.socket.sendto("9000".encode('utf-8'), (self.dest_ip, self.dest_port))
