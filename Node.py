@@ -78,7 +78,7 @@ class Node:
                     
     async def receive(self):
         while True:
-            ret_msg = "7776:"
+            ret_msg = "7777:"
             if self.received_msg is not None:
                 #calcula o erro
                 err = crc32(self.received_msg[-1])
