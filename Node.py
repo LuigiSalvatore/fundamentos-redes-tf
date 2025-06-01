@@ -163,7 +163,7 @@ class Node:
             if self.has_token and (time() - self.token_time > int(self.token_lifetime)):
                 print("!!!!!! Token expired, passing token !!!!!!")
                 self.pass_token()
-            sleep(self.token_lifetime)  # Sleep for the token lifetime to check for expiration
+            sleep(int(self.token_lifetime))  # Sleep for the token lifetime to check for expiration
     
     def queue_msg(self, dest, msg):
         crc = crc32(msg.encode('utf-8'))
