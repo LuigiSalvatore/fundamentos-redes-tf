@@ -100,6 +100,8 @@ class Node:
         actionmenu.add_command(label="Send Messages", command=self.multi_message_dialog)
         actionmenu.add_command(label="Broadcast", command=self.broadcast_dialog)
         actionmenu.add_command(label="Inject Error", command=self.inject_error_dialog)
+        actionmenu.add_command(label="Make Token", command=self.make_token)
+        actionmenu.add_command(label="Delete Token", command=self.del_token)
         actionmenu.add_command(label="Check Status", command=self.status_dialog)
         actionmenu.add_separator()
         actionmenu.add_command(label="Exit", command=root.quit)
@@ -134,7 +136,7 @@ class Node:
         tk.Label(dialog, text="Message:").grid(row=1, column=0)
         msg_entry = tk.Entry(dialog)
         msg_entry.grid(row=1, column=1)
-        
+	
         def send():
             dest = dest_entry.get()
             msg = msg_entry.get()
@@ -142,7 +144,15 @@ class Node:
                 self.queue_msg(dest, msg)
                 dialog.destroy()
         
-        tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
+            tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
+
+    def make_token(self):
+        self.log("Sending new token!", "warn")
+        self.pass_token()
+
+    def del_token(self):
+        self.log("Deleting next token!", "warn")
+        self.del_next_token = True
     
     def broadcast_dialog(self):
         """Dialog for broadcast messages (from file2)"""
@@ -235,6 +245,7 @@ class Node:
                     else:
                         if control == "ACK":
                             self.log(f"Received ACK for our message from {dest}.", "ack")
+                            self.pass_token()
                         elif control == "naoexiste":
                             self.log(f"Received naoexiste from {dest}, maybe there's no path to it?", "warn")
                         if hasattr(self, "retry_attempted"):
@@ -259,6 +270,12 @@ class Node:
         self.send(f"7777:{control};{origin};{self.name};{crc};{msg_content}")
     
     def handle_token(self):
+
+        if self.hasattr("del_next_token"):
+            self.log("Deleting the token we just received!", "warn")
+            del self.del_next_token
+            return
+        
         curr_time = time()
     
         # If we're the token manager and the token came back too soon
@@ -283,10 +300,9 @@ class Node:
                     self.corrupt_next_message = False
                 self.pass_message(msg)
                 self.log(f"Sent message: {msg}", "debug")
-        
-        self.log("Passing token to next node", "token")
-        self.pass_token()
-        sleep(0.5)  # Wait before passing the token again
+            else:
+                self.log("No messages queued - Passing token to next node", "token")
+                self.pass_token()
 
     
     def apply_corruption(self, msg):
