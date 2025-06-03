@@ -97,6 +97,7 @@ class Node:
         menubar = tk.Menu(root)
         actionmenu = tk.Menu(menubar, tearoff=0)
         actionmenu.add_command(label="Send Message", command=self.send_message_dialog)
+        actionmenu.add_command(label="Send Messages", command=self.multi_message_dialog)
         actionmenu.add_command(label="Broadcast", command=self.broadcast_dialog)
         actionmenu.add_command(label="Inject Error", command=self.inject_error_dialog)
         actionmenu.add_command(label="Check Status", command=self.status_dialog)
@@ -281,11 +282,11 @@ class Node:
                     self.log(f"Message corrupted in {self.corrupt_field}", "warn")
                     self.corrupt_next_message = False
                 self.pass_message(msg)
-            else:
-                # If we're the manager, hold token for full lifetime
-                if self.is_token_manager:
-                    sleep(self.token_lifetime)
-                self.pass_token()
+                self.log(f"Sent message: {msg}", "debug")
+        
+        self.log("Passing token to next node", "token")
+        self.pass_token()
+        sleep(0.5)  # Wait before passing the token again
 
     
     def apply_corruption(self, msg):
@@ -344,6 +345,57 @@ class Node:
                 self.corrupt_field = choice
             else:
                 self.log("Can't inject error - message queue is empty. Try writing a message first.", "warn")
+                
+    def multi_message_dialog(self):
+        """Dialog for queuing multiple messages at once (new feature)"""
+        dialog = tk.Toplevel()
+        dialog.title("Queue Multiple Messages")
+    
+        # Destination entry
+        tk.Label(dialog, text="Destination:").grid(row=0, column=0, sticky='w')
+        dest_entry = tk.Entry(dialog)
+        dest_entry.grid(row=0, column=1, padx=5, pady=5)
+    
+        # Message list box with scrollbar
+        tk.Label(dialog, text="Messages (one per line):").grid(row=1, column=0, sticky='w', columnspan=2)
+        msg_frame = tk.Frame(dialog)
+        msg_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5)
+    
+        scrollbar = tk.Scrollbar(msg_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+        msg_list = tk.Text(msg_frame, height=10, width=40, yscrollcommand=scrollbar.set)
+        msg_list.pack(side=tk.LEFT, fill=tk.BOTH)
+        scrollbar.config(command=msg_list.yview)
+    
+        # Button frame
+        button_frame = tk.Frame(dialog)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=5)
+    
+        def queue_messages():
+            dest = dest_entry.get().strip()
+            messages = msg_list.get("1.0", tk.END).splitlines()
+        
+            if not dest:
+                self.log("Error: Destination cannot be empty", "error")
+                return
+            
+            if not any(messages):
+                self.log("Error: No messages to queue", "error")
+                return
+            
+            with self.msg_lock:
+                for msg in messages:
+                    if msg.strip():  # Only queue non-empty messages
+                        crc = crc32(msg.encode('utf-8'))
+                        raw_msg = f"7777:naoexiste;{self.name};{dest};{crc};{msg}"
+                        self.msgs.append(raw_msg)
+                    
+            self.log(f"Queued {len([m for m in messages if m.strip()])} messages for {dest}", "info")
+            dialog.destroy()
+    
+        tk.Button(button_frame, text="Queue Messages", command=queue_messages).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
 if __name__ == "__main__":
     import sys
