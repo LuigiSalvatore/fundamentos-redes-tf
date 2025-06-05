@@ -48,7 +48,7 @@ class Node:
         self.corrupt_next_message = False
         self.corrupt_field = ""
         
-        # GUI additions
+        # GUI
         self.log_queue = queue.Queue()
         self.gui_thread = threading.Thread(target=self.start_gui, daemon=True)
         self.gui_thread.start()
@@ -64,18 +64,18 @@ class Node:
             
     # GUI methods
     def log(self, message, tag="info"):
-        """Log message to GUI"""
+        """Log message to GUI """
         timestamp = strftime("[%H:%M:%S]")
         self.log_queue.put((f"{timestamp} {self.name}: {message}", tag))
     
     def start_gui(self):
-        """Initialize GUI components"""
+        """Initialize GUI components """
         root = tk.Tk()
         root.title(f"Node {self.name} - Logs")
         text_area = ScrolledText(root, height=20, width=80)
         text_area.pack()
 
-        # Configure tags for different message types
+        # Configure tags for different message types 
         text_area.tag_config("token", foreground="blue")
         text_area.tag_config("info", foreground="black")
         text_area.tag_config("debug", foreground="gray")
@@ -84,14 +84,47 @@ class Node:
         text_area.tag_config("ack", foreground="green")
         text_area.tag_config("nack", foreground="darkred")
 
+        log_types = ["token", "info", "debug", "error", "warn", "ack", "nack"]
+        log_filter = {t: tk.BooleanVar(value=True) for t in log_types}
+        all_logs = [] # Store all logs for filtering
+
         def update_logs():
-            """Update GUI with new log messages"""
+            """Update GUI with new log messages """
+            updated = False
             while not self.log_queue.empty():
                 msg, tag = self.log_queue.get_nowait()
                 text_area.insert(tk.END, msg + "\n", tag)
-                text_area.see(tk.END)
-            root.after(100, update_logs)
+                all_logs.append((msg, tag))
+                updated = True
 
+            if updated:
+                text_area.config(state=tk.NORMAL)
+                text_area.delete(1.0, tk.END)
+                for msg, tag in all_logs:
+                    if log_filter.get(tag, tk.BooleanVar(value=True)).get():
+                        text_area.insert(tk.END, msg + "\n", tag)
+                text_area.see(tk.END)
+                text_area.config(state=tk.NORMAL)
+            root.after(100, update_logs)
+        # filter menu
+        filtermenu = tk.Menu(root, tearoff=0)
+        def toggle_filter():
+            # redraw log area with current filter
+            text_area.config(state=tk.NORMAL)
+            text_area.delete(1.0, tk.END)
+            for msg, tag in all_logs:
+                if log_filter.get(tag, tk.BooleanVar(value=True)).get():
+                    text_area.insert(tk.END, msg + "\n", tag)
+            text_area.see(tk.END)
+            text_area.config(state=tk.NORMAL)
+        
+        for t in log_types:
+            filtermenu.add_checkbutton(
+                label=t.capitalize(),
+                variable=log_filter[t],
+                command=toggle_filter
+            )
+        
         # Create menu for user actions
         menubar = tk.Menu(root)
         actionmenu = tk.Menu(menubar, tearoff=0)
@@ -105,6 +138,7 @@ class Node:
         actionmenu.add_separator()
         actionmenu.add_command(label="Exit", command=root.quit)
         menubar.add_cascade(label="Actions", menu=actionmenu)
+        menubar.add_cascade(label="Log Filter", menu=filtermenu)
         root.config(menu=menubar)
 
         update_logs()
@@ -133,7 +167,7 @@ class Node:
         tk.Button(dialog, text="Close", command=dialog.destroy).pack()
         
     def send_message_dialog(self):
-        """Dialog for sending messages"""
+        """Dialog for sending messages """
         dialog = tk.Toplevel()
         dialog.title("Send Message")
         
@@ -155,7 +189,7 @@ class Node:
         tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
     
     def broadcast_dialog(self):
-        """Dialog for broadcast messages"""
+        """Dialog for broadcast messages """
         dialog = tk.Toplevel()
         dialog.title("Broadcast Message")
         
@@ -172,7 +206,7 @@ class Node:
         tk.Button(dialog, text="Broadcast", command=send).grid(row=1, columnspan=2)
     
     def inject_error_dialog(self):
-        """Dialog for error injection"""
+        """Dialog for error injection """
         dialog = tk.Toplevel()
         dialog.title("Inject Error")
         
@@ -312,7 +346,7 @@ class Node:
 
     
     def apply_corruption(self, msg):
-        """Apply corruption to message"""
+        """Apply corruption to message """
         _, data = msg.split(':', 1)
         control, origin, dest, crc, msg_content = data.split(';', 4)
         if self.corrupt_field == "1":
@@ -362,7 +396,7 @@ class Node:
         self.log(f"Message queued for {dest}: {msg}", "debug")
         
     def inject_error(self, choice):
-        """Inject error into next message"""
+        """Inject error into next message """
         with self.msg_lock:
             if self.msgs:
                 self.log("Injecting error into the first message in the queue.", "warn")
