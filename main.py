@@ -258,8 +258,12 @@ class Node:
             # Normal message handling
             if msg_type == "7777":
                 # Base case: Message is for this node
-                if dest == self.name or dest == "TODOS":
+                if dest == self.name:
                     self.process_message(control, origin, crc, msg_content)
+                elif dest == "TODOS" and origin != self.name:
+                    self.log(f"Received broadcast message from {origin}, passing it along.", "debug")
+                    self.log(f"Message: {msg_content}", "info")
+                    self.send(raw_msg)
             
                 # Loopback case: Message is from this node
                 elif origin == self.name:
@@ -280,8 +284,13 @@ class Node:
                     else:
                         if control == "ACK":
                             self.log(f"Received ACK for our message from {dest}.", "ack")
-                        elif control == "naoexiste":
+                        elif control == "naoexiste" and dest != "TODOS":
                             self.log(f"Received naoexiste from {dest}, maybe there's no path to it?", "warn")
+                        elif dest == "TODOS":
+                            self.log(f"Our broadcast message \"{msg_content}\" successfully looped back.", "ack")
+                        else:
+                            self.log(f"Error: couldn't parse message {raw_msg} correctly.", "error")
+                        
                         if hasattr(self, "retry_attempted"):
                             del self.retry_attempted # Clear retry flag
                         self.log("Passing token along", "token")
