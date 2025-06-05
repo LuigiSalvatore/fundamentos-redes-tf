@@ -100,9 +100,9 @@ class Node:
         actionmenu.add_command(label="Send Messages", command=self.multi_message_dialog)
         actionmenu.add_command(label="Broadcast", command=self.broadcast_dialog)
         actionmenu.add_command(label="Inject Error", command=self.inject_error_dialog)
-        actionmenu.add_command(label="Make Token", command=self.make_token)
-        actionmenu.add_command(label="Delete Token", command=self.del_token)
         actionmenu.add_command(label="Check Status", command=self.status_dialog)
+        actionmenu.add_command(label="Message Queue", command=self.show_queue_dialog)  # <-- Added here
+        actionmenu.add_command(label="Gerar Novo Token", command=self.gerar_token_dialog)
         actionmenu.add_separator()
         actionmenu.add_command(label="Exit", command=root.quit)
         menubar.add_cascade(label="Actions", menu=actionmenu)
@@ -110,7 +110,20 @@ class Node:
 
         update_logs()
         root.mainloop()
-   
+
+    def show_queue_dialog(self):
+        """Show the current message queue in a dialog"""
+        dialog = tk.Toplevel()
+        dialog.title("Fila de Mensagens")
+
+        with self.msg_lock:
+            if not self.msgs:
+                tk.Label(dialog, text="A fila de mensagens está vazia.").pack(padx=10, pady=10)
+            else:
+                for idx, msg in enumerate(self.msgs, 1):
+                    tk.Label(dialog, text=f"{idx}: {msg}").pack(anchor='w', padx=10)
+
+        tk.Button(dialog, text="Fechar", command=dialog.destroy).pack(pady=10)   
     def status_dialog(self):
         """Dialog to show node status (from file2)"""
         dialog = tk.Toplevel()
@@ -136,7 +149,7 @@ class Node:
         tk.Label(dialog, text="Message:").grid(row=1, column=0)
         msg_entry = tk.Entry(dialog)
         msg_entry.grid(row=1, column=1)
-	
+        
         def send():
             dest = dest_entry.get()
             msg = msg_entry.get()
@@ -144,15 +157,7 @@ class Node:
                 self.queue_msg(dest, msg)
                 dialog.destroy()
         
-            tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
-
-    def make_token(self):
-        self.log("Sending new token!", "warn")
-        self.pass_token()
-
-    def del_token(self):
-        self.log("Deleting next token!", "warn")
-        self.del_next_token = True
+        tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
     
     def broadcast_dialog(self):
         """Dialog for broadcast messages (from file2)"""
@@ -245,7 +250,6 @@ class Node:
                     else:
                         if control == "ACK":
                             self.log(f"Received ACK for our message from {dest}.", "ack")
-                            self.pass_token()
                         elif control == "naoexiste":
                             self.log(f"Received naoexiste from {dest}, maybe there's no path to it?", "warn")
                         if hasattr(self, "retry_attempted"):
@@ -270,14 +274,11 @@ class Node:
         self.send(f"7777:{control};{origin};{self.name};{crc};{msg_content}")
     
     def handle_token(self):
-
-        if self.hasattr("del_next_token"):
-            self.log("Deleting the token we just received!", "warn")
-            del self.del_next_token
-            return
-        
         curr_time = time()
-    
+            # Se já possui o token, destrói o duplicado
+        if self.is_token_manager and self.has_token:
+            self.log("Token received but already has token. Destroying extra token.", "warn")
+            return
         # If we're the token manager and the token came back too soon
         if self.is_token_manager:
             time_dif = curr_time - self.token_time if self.token_time else float('inf')
@@ -300,10 +301,27 @@ class Node:
                     self.corrupt_next_message = False
                 self.pass_message(msg)
                 self.log(f"Sent message: {msg}", "debug")
-            else:
-                self.log("No messages queued - Passing token to next node", "token")
-                self.pass_token()
+        
+        self.log("Passing token to next node", "token")
+        self.pass_token()
+        sleep(0.5)  # Wait before passing the token again
 
+    def gerar_token_dialog(self):
+        dialog = tk.Toplevel()
+        dialog.title("Gerar Novo Token")
+        msg = "Deseja realmente gerar um novo token?\n(Só é permitido se você é o token manager.)"
+        tk.Label(dialog, text=msg).pack(padx=10, pady=10)
+
+        def gerar():
+            if self.is_token_manager:
+                self.log("Gerando novo token manualmente.", "token")
+                self.pass_token()
+            else:
+                self.log("Não é possível gerar novo token: este nó não é token manager.", "error")
+            dialog.destroy()
+
+        tk.Button(dialog, text="Gerar Token", command=gerar).pack(side=tk.LEFT, padx=10, pady=10)
+        tk.Button(dialog, text="Cancelar", command=dialog.destroy).pack(side=tk.RIGHT, padx=10, pady=10)
     
     def apply_corruption(self, msg):
         """Apply corruption to message (from file2)"""
@@ -343,13 +361,15 @@ class Node:
                     self.pass_token()
             sleep(1)
     
+    
     def queue_msg(self, dest, msg):
-        crc = crc32(msg.encode('utf-8'))
-        raw_msg = f"7777:naoexiste;{self.name};{dest};{crc};{msg}"
-        
         with self.msg_lock:
+            if len(self.msgs) >= 10:
+                self.log("Limite de 10 mensagens na fila atingido. Não é possível adicionar mais mensagens.", "warn")
+                return
+            crc = crc32(msg.encode('utf-8'))
+            raw_msg = f"7777:naoexiste;{self.name};{dest};{crc};{msg}"
             self.msgs.append(raw_msg)
-            
         self.log(f"Message queued for {dest}: {msg}", "debug")
         
     def inject_error(self, choice):
@@ -366,52 +386,57 @@ class Node:
         """Dialog for queuing multiple messages at once (new feature)"""
         dialog = tk.Toplevel()
         dialog.title("Queue Multiple Messages")
-    
+
         # Destination entry
         tk.Label(dialog, text="Destination:").grid(row=0, column=0, sticky='w')
         dest_entry = tk.Entry(dialog)
         dest_entry.grid(row=0, column=1, padx=5, pady=5)
-    
+
         # Message list box with scrollbar
         tk.Label(dialog, text="Messages (one per line):").grid(row=1, column=0, sticky='w', columnspan=2)
         msg_frame = tk.Frame(dialog)
         msg_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5)
-    
+
         scrollbar = tk.Scrollbar(msg_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
+
         msg_list = tk.Text(msg_frame, height=10, width=40, yscrollcommand=scrollbar.set)
         msg_list.pack(side=tk.LEFT, fill=tk.BOTH)
         scrollbar.config(command=msg_list.yview)
-    
+
         # Button frame
         button_frame = tk.Frame(dialog)
         button_frame.grid(row=3, column=0, columnspan=2, pady=5)
-    
+
         def queue_messages():
             dest = dest_entry.get().strip()
             messages = msg_list.get("1.0", tk.END).splitlines()
-        
+
             if not dest:
                 self.log("Error: Destination cannot be empty", "error")
                 return
-            
-            if not any(messages):
-                self.log("Error: No messages to queue", "error")
-                return
-            
+
+            # Only non-empty messages
+            non_empty_msgs = [msg for msg in messages if msg.strip()]
             with self.msg_lock:
-                for msg in messages:
-                    if msg.strip():  # Only queue non-empty messages
-                        crc = crc32(msg.encode('utf-8'))
-                        raw_msg = f"7777:naoexiste;{self.name};{dest};{crc};{msg}"
-                        self.msgs.append(raw_msg)
-                    
-            self.log(f"Queued {len([m for m in messages if m.strip()])} messages for {dest}", "info")
+                available_slots = 10 - len(self.msgs)
+                if available_slots <= 0:
+                    self.log("Limite de 10 mensagens na fila atingido. Não é possível adicionar mais mensagens.", "warn")
+                    dialog.destroy()
+                    return
+                msgs_to_add = non_empty_msgs[:available_slots]
+                for msg in msgs_to_add:
+                    crc = crc32(msg.encode('utf-8'))
+                    raw_msg = f"7777:naoexiste;{self.name};{dest};{crc};{msg}"
+                    self.msgs.append(raw_msg)
+            self.log(f"Queued {len(msgs_to_add)} messages for {dest}", "info")
+            if len(non_empty_msgs) > available_slots:
+                self.log(f"Apenas {available_slots} mensagens foram adicionadas devido ao limite de 10 mensagens na fila.", "warn")
             dialog.destroy()
-    
+
         tk.Button(button_frame, text="Queue Messages", command=queue_messages).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
 
 if __name__ == "__main__":
     import sys
