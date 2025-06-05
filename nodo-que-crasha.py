@@ -98,48 +98,16 @@ class Node:
         text_area.tag_config("ack", foreground="green")
         text_area.tag_config("nack", foreground="darkred")
 
-        # --- Log filter state ---
-        log_types = ["token", "info", "debug", "error", "warn", "ack", "nack"]
-        log_filter = {t: tk.BooleanVar(value=True) for t in log_types}
-        all_logs = []  # Store all logs for filtering
-
         def update_logs():
+            self.log(f"Updating logs at {strftime('%H:%M:%S')}", "debug")
             """Update GUI with new log messages (from file2)"""
-            updated = False
             while not self.log_queue.empty():
                 msg, tag = self.log_queue.get_nowait()
-                all_logs.append((msg, tag))
-                updated = True
-            if updated:
-                text_area.config(state=tk.NORMAL)
-                text_area.delete(1.0, tk.END)
-                for msg, tag in all_logs:
-                    if log_filter.get(tag, tk.BooleanVar(value=True)).get():
-                        text_area.insert(tk.END, msg + "\n", tag)
+                text_area.insert(tk.END, msg + "\n", tag)
                 text_area.see(tk.END)
-                text_area.config(state=tk.NORMAL)
             root.after(100, update_logs)
 
-        # --- Filter menu ---
-        filtermenu = tk.Menu(root, tearoff=0)
-        def toggle_filter():
-            # Redraw log area with current filter
-            text_area.config(state=tk.NORMAL)
-            text_area.delete(1.0, tk.END)
-            for msg, tag in all_logs:
-                if log_filter.get(tag, tk.BooleanVar(value=True)).get():
-                    text_area.insert(tk.END, msg + "\n", tag)
-            text_area.see(tk.END)
-            text_area.config(state=tk.NORMAL)
-
-        for t in log_types:
-            filtermenu.add_checkbutton(
-                label=t.capitalize(),
-                variable=log_filter[t],
-                command=toggle_filter
-            )
-
-        # --- Menubar setup ---
+        # Create menu for user actions (from file2)
         menubar = tk.Menu(root)
         actionmenu = tk.Menu(menubar, tearoff=0)
         actionmenu.add_command(label="Send Message", command=self.send_message_dialog)
@@ -148,17 +116,16 @@ class Node:
         actionmenu.add_command(label="Inject Error", command=self.inject_error_dialog)
         actionmenu.add_command(label="Check Status", command=self.status_dialog)
         actionmenu.add_command(label="Destroy Next Token", command=self.set_destroy_token)
-        actionmenu.add_command(label="Message Queue", command=self.show_queue_dialog)
+        actionmenu.add_command(label="Message Queue", command=self.show_queue_dialog) 
         actionmenu.add_command(label="Generate New Token", command=self.gerar_token_dialog)
         actionmenu.add_separator()
         actionmenu.add_command(label="Exit", command=root.quit)
         menubar.add_cascade(label="Actions", menu=actionmenu)
-        menubar.add_cascade(label="Log Filter", menu=filtermenu)  # <-- Add filter menu here
         root.config(menu=menubar)
 
         update_logs()
         root.mainloop()
-        
+
     def set_destroy_token(self):
         self.destroy_next_token = True
         self.log("Next Token will be destroyed.", "warn")
@@ -261,6 +228,7 @@ class Node:
 
     # Original file1 methods (unchanged except for print->log conversion)
     def listen_loop(self):
+        self.log("Listening for incoming messages...", "debug")
         # Reminder:
         # Token: "9000" (nothing else)
         # Regular: "7777:control;origin;dest;crc;message_content" ie "7777:naoexiste;Juca;Juquinha;1388532993;Hello World"
@@ -279,6 +247,7 @@ class Node:
                 self.log(f"Error receiving message: {e}", "error")
     
     def handle_message(self, raw_msg):
+        self.log(f"Handling message: {raw_msg}", "debug")
         try:
             # Split the raw message into components
             msg_type, data = raw_msg.split(':', 1)
@@ -287,7 +256,7 @@ class Node:
             # Normal message handling
             if msg_type == "7777":
                 # Base case: Message is for this node
-                if dest == self.name or dest == "TODOS": # Added "TODOS" from file2
+                if dest == self.name or dest == "TODOS": 
                     self.process_message(control, origin, crc, msg_content)
             
                 # Loopback case: Message is from this node
@@ -335,7 +304,9 @@ class Node:
         self.send(f"7777:{control};{origin};{self.name};{crc};{msg_content}")
     
     
+    
     def handle_token(self):
+        self.log("Handling token reception...", "debug")
         curr_time = time()
 
         if self.destroy_next_token:
@@ -349,16 +320,18 @@ class Node:
                 self.log(f"Token arrived too soon ({time_dif:.2f}s), ignoring.", "token")
                 return
 
-        with self.msg_lock:
-            self.has_token = True
-            self.token_time = curr_time
-            self.log("RECEIVED TOKEN", "token")
+        self.has_token = True
+        self.token_time = curr_time
+        self.log("RECEIVED TOKEN", "token")
 
+        sent_message = False
+        with self.msg_lock:
             if self.msgs:
                 msg = self.msgs.pop(0)
                 self.waiting_ack_event.clear()
                 self.ack_received = False
                 self.nack_count = 0
+                sent_message = True
 
                 if self.corrupt_next_message:
                     msg = self.apply_corruption(msg)
@@ -368,12 +341,21 @@ class Node:
                 self.pass_message(msg)
                 self.log(f"Sent message: {msg}", "debug")
 
-        # Wait outside the lock
-        start_wait = time()
-        while time() - start_wait < 3:
-            if self.ack_received or self.nack_count >= 2:
-                break
-            sleep(0.1)
+        if sent_message:
+            start_wait = time()
+            while time() - start_wait < 3:
+                if self.ack_received or self.nack_count >= 2:
+                    break
+                sleep(0.1)
+                self.log("Waiting for ACK/NACK...", "debug")
+
+
+        else:
+            while time() - self.token_time < self.token_timemin:
+                sleep(0.1)
+                self.log("Waiting for messages to send...", "debug")
+
+            
 
         self.log("Passing token to next node", "token")
         self.pass_token()
@@ -413,6 +395,7 @@ class Node:
         self.socket.sendto(raw_msg.encode('utf-8'), (self.dest_ip, self.dest_port))
     
     def pass_token(self):
+        self.log("Passing token to next node...", "debug")
         self.socket.sendto(b"9000", (self.dest_ip, self.dest_port))
         self.has_token = False
         
@@ -421,6 +404,7 @@ class Node:
         self.pass_token()
     
     def token_handler(self):
+        self.log("Token handler started.", "debug")
         while True:
             if self.is_token_manager:
                 # Only manager handles token regeneration
@@ -430,6 +414,7 @@ class Node:
                     self.token_time = time()
                     self.pass_token()
             sleep(1)
+            self.log("Token handler running...", "debug")
     
     
     def queue_msg(self, dest, msg):
