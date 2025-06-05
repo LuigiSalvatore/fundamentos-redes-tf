@@ -22,6 +22,9 @@ class Node:
                 raise ValueError("Token status must be 'true' or 'false'.")
             self.has_token = token_status == 'true'
         
+        # Parameters
+        self.destroy_next_token = False
+
         # Listen port for incoming messages
         self.listen_port = listen_port
         
@@ -101,8 +104,9 @@ class Node:
         actionmenu.add_command(label="Broadcast", command=self.broadcast_dialog)
         actionmenu.add_command(label="Inject Error", command=self.inject_error_dialog)
         actionmenu.add_command(label="Check Status", command=self.status_dialog)
-        actionmenu.add_command(label="Message Queue", command=self.show_queue_dialog)  # <-- Added here
-        actionmenu.add_command(label="Gerar Novo Token", command=self.gerar_token_dialog)
+        actionmenu.add_command(label="Destroy Next Token", command=self.set_destroy_token)
+        actionmenu.add_command(label="Message Queue", command=self.show_queue_dialog) 
+        actionmenu.add_command(label="Generate New Token", command=self.gerar_token_dialog)
         actionmenu.add_separator()
         actionmenu.add_command(label="Exit", command=root.quit)
         menubar.add_cascade(label="Actions", menu=actionmenu)
@@ -110,6 +114,10 @@ class Node:
 
         update_logs()
         root.mainloop()
+
+    def set_destroy_token(self):
+        self.destroy_next_token = True
+        self.log("Next Token will be destroyed.", "warn")
 
     def show_queue_dialog(self):
         """Show the current message queue in a dialog"""
@@ -275,10 +283,11 @@ class Node:
     
     def handle_token(self):
         curr_time = time()
-            # Se já possui o token, destrói o duplicado
-        if self.is_token_manager and self.has_token:
-            self.log("Token received but already has token. Destroying extra token.", "warn")
+        if self.destroy_next_token:
+            self.log("Token Destroyed (Manual).", "warn")
+            self.destroy_next_token = False
             return
+
         # If we're the token manager and the token came back too soon
         if self.is_token_manager:
             time_dif = curr_time - self.token_time if self.token_time else float('inf')
