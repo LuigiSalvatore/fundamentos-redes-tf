@@ -24,6 +24,11 @@ class Node:
         
         # Parameters
         self.destroy_next_token = False
+        self.awaiting_ack = False
+        self.ack_received = False
+        self.nack_count = 0
+        self.waiting_ack_event = None
+
 
         # Listen port for incoming messages
         self.listen_port = listen_port
@@ -46,6 +51,11 @@ class Node:
         self.last_token_time = time() if self.has_token else None
         self.token_lifetime = int(self.token_lifetime)
         self.token_timeout = token_timeout # Token timeout in seconds
+
+        self.destroy_next_token = False
+        self.ack_received = False
+        self.nack_count = 0
+        self.waiting_ack_event = threading.Event()
         self.token_timemin = token_timemin # Token must take at least this long to be passed
         
         # Error injection from file2 (new optional feature)
@@ -165,7 +175,10 @@ class Node:
                 self.queue_msg(dest, msg)
                 dialog.destroy()
         
-        tk.Button(dialog, text="Send", command=send).grid(row=2, columnspan=2)
+        send_button = tk.Button(dialog, text="Send", command=send)
+        send_button.grid(row=2, columnspan=2)
+        dialog.bind("<Return>", lambda event: send())
+
     
     def broadcast_dialog(self):
         """Dialog for broadcast messages (from file2)"""
@@ -182,7 +195,9 @@ class Node:
                 self.queue_msg("TODOS", msg)
                 dialog.destroy()
         
-        tk.Button(dialog, text="Broadcast", command=send).grid(row=1, columnspan=2)
+        send_button = tk.Button(dialog, text="Broadcast", command=send)
+        send_button.grid(row=1, columnspan=2)
+        dialog.bind("<Return>", lambda event: send())
     
     def inject_error_dialog(self):
         """Dialog for error injection (from file2)"""
@@ -245,6 +260,8 @@ class Node:
                 elif origin == self.name:
                     # NACK handling
                     if control == "NACK":
+                        if self.awaiting_ack:
+                            self.nack_count += 1
                         # Check if we have already attempted to resend this message, if not, resend it
                         if not hasattr(self, "retry_attempted"):
                             self.log("Received NACK - resending message at earliest opportunity.", "nack")
@@ -257,6 +274,8 @@ class Node:
                     # ACK and naoexiste handling
                     else:
                         if control == "ACK":
+                            if self.awaiting_ack:
+                                self.ack_received = True
                             self.log(f"Received ACK for our message from {dest}.", "ack")
                         elif control == "naoexiste":
                             self.log(f"Received naoexiste from {dest}, maybe there's no path to it?", "warn")
@@ -281,22 +300,21 @@ class Node:
             control = "ACK"
         self.send(f"7777:{control};{origin};{self.name};{crc};{msg_content}")
     
+    
     def handle_token(self):
         curr_time = time()
+
         if self.destroy_next_token:
-            self.log("Token Destroyed (Manual).", "warn")
+            self.log("Token destroyed as requested.", "warn")
             self.destroy_next_token = False
             return
 
-        # If we're the token manager and the token came back too soon
         if self.is_token_manager:
             time_dif = curr_time - self.token_time if self.token_time else float('inf')
-        
             if time_dif < self.token_timemin:
-                self.log(f"Token arrived too soon ({time_dif:.2f}s), Manager ignoring", "token")
+                self.log(f"Token arrived too soon ({time_dif:.2f}s), ignoring.", "token")
                 return
-    
-        # Normal token processing
+
         with self.msg_lock:
             self.has_token = True
             self.token_time = curr_time
@@ -304,16 +322,28 @@ class Node:
 
             if self.msgs:
                 msg = self.msgs.pop(0)
+                self.waiting_ack_event.clear()
+                self.ack_received = False
+                self.nack_count = 0
+
                 if self.corrupt_next_message:
                     msg = self.apply_corruption(msg)
-                    self.log(f"Message corrupted in {self.corrupt_field}", "warn")
+                    self.log(f"Message corrupted in field {self.corrupt_field}", "warn")
                     self.corrupt_next_message = False
+
                 self.pass_message(msg)
                 self.log(f"Sent message: {msg}", "debug")
-        
+
+        # Wait outside the lock
+        start_wait = time()
+        while time() - start_wait < 3:
+            if self.ack_received or self.nack_count >= 2:
+                break
+            sleep(0.1)
+
         self.log("Passing token to next node", "token")
         self.pass_token()
-        sleep(0.5)  # Wait before passing the token again
+
 
     def gerar_token_dialog(self):
         dialog = tk.Toplevel()
